@@ -23,6 +23,10 @@
 @property (strong, nonatomic) NSMutableData *imageData;
 @property (strong, nonatomic) NSURLConnection *connection;
 
+#if TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_4_0
+@property (assign, nonatomic) UIBackgroundTaskIdentifier backgroundTaskId;
+#endif
+
 @end
 
 @implementation SDWebImageDownloaderOperation
@@ -56,6 +60,25 @@
         [self reset];
         return;
     }
+
+#if TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_4_0
+    if ([self shouldContinueWhenAppEntersBackground])
+    {
+        __weak __typeof__(self) wself = self;
+        self.backgroundTaskId = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^
+        {
+            __strong __typeof(wself)sself = wself;
+
+            if (sself)
+            {
+                [sself cancel];
+
+                [[UIApplication sharedApplication] endBackgroundTask:sself.backgroundTaskId];
+                sself.backgroundTaskId = UIBackgroundTaskInvalid;
+            }
+        }];
+    }
+#endif
 
     self.executing = YES;
     self.connection = [NSURLConnection.alloc initWithRequest:self.request delegate:self startImmediately:NO];
@@ -343,5 +366,26 @@
     }
 }
 
+- (BOOL)shouldContinueWhenAppEntersBackground
+{
+    return self.options & SDWebImageDownloaderContinueInBackground;
+}
+
+- (BOOL)connection:(NSURLConnection *)connection canAuthenticateAgainstProtectionSpace:(NSURLProtectionSpace *)protectionSpace
+{
+    return [protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust];
+}
+
+- (void)connection:(NSURLConnection *)connection didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
+{
+    BOOL trustAllCertificates = (self.options & SDWebImageDownloaderAllowInvalidSSLCertificates);
+    if (trustAllCertificates && [challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust])
+    {
+        [challenge.sender useCredential:[NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]
+             forAuthenticationChallenge:challenge];
+    }
+    
+    [challenge.sender continueWithoutCredentialForAuthenticationChallenge:challenge];
+}
 
 @end
